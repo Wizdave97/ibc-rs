@@ -34,7 +34,7 @@ use crate::core::ics05_port::context::PortReader;
 use crate::core::ics05_port::error::Error as Ics05Error;
 use crate::core::ics23_commitment::commitment::CommitmentPrefix;
 use crate::core::ics24_host::identifier::{ChainId, ChannelId, ClientId, ConnectionId, PortId};
-use crate::core::ics26_routing::context::{Ics26Context, Module, Router};
+use crate::core::ics26_routing::context::{Ics26Context, Module, Router, RouterBuilder};
 use crate::core::ics26_routing::handler::{deliver, dispatch};
 use crate::core::ics26_routing::msgs::Ics26Envelope;
 use crate::events::IbcEvent;
@@ -432,15 +432,8 @@ impl MockContext {
         }
     }
 
-    pub fn with_router_module(
-        mut self,
-        module_id: String,
-        module: impl Module,
-    ) -> Result<Self, String> {
-        match self.router.0.insert(module_id, Arc::new(module)) {
-            None => Ok(self),
-            Some(_) => Err("Duplicate module_id".to_owned()),
-        }
+    pub fn with_router(self, router: MockRouter) -> Self {
+        Self { router, ..self }
     }
 
     /// Accessor for a block of the local (host) chain from this context.
@@ -543,6 +536,25 @@ impl MockContext {
             .consensus_states
             .get(height)
             .unwrap()
+    }
+}
+
+#[derive(Default)]
+pub struct MockRouterBuilder(MockRouter);
+
+impl RouterBuilder for MockRouterBuilder {
+    type Router = MockRouter;
+    type ModuleId = String;
+
+    fn add_route(&mut self, module_id: Self::ModuleId, module: impl Module) -> Result<(), String> {
+        match self.0 .0.insert(module_id, Arc::new(module)) {
+            None => Ok(()),
+            Some(_) => Err("Duplicate module_id".to_owned()),
+        }
+    }
+
+    fn build(self) -> Self::Router {
+        self.0
     }
 }
 
@@ -1141,9 +1153,10 @@ mod tests {
     use crate::core::ics05_port::capabilities::Capability;
     use crate::core::ics24_host::identifier::ChainId;
     use crate::core::ics24_host::identifier::{ChannelId, ConnectionId, PortId};
-    use crate::core::ics26_routing::context::{Module, Router};
+    use crate::core::ics26_routing::context::{Module, Router, RouterBuilder};
     use crate::core::ics26_routing::error::Error;
     use crate::mock::context::MockContext;
+    use crate::mock::context::MockRouterBuilder;
     use crate::mock::host::HostType;
     use crate::prelude::*;
     use crate::signer::Signer;
@@ -1379,6 +1392,8 @@ mod tests {
             }
         }
         let m = MockModule;
+        let mut r = MockRouterBuilder::default();
+        r.add_route("mockmodule".to_owned(), m).unwrap();
 
         let mut ctx = MockContext::new(
             ChainId::new("mockgaia".to_string(), 1),
@@ -1386,8 +1401,7 @@ mod tests {
             1,
             Height::new(1, 0),
         )
-        .with_router_module("mockmodule".to_owned(), m)
-        .unwrap();
+        .with_router(r.build());
 
         let m = ctx.router.get_route_mut("mockmodule");
         let _ = m
